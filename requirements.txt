@@ -1,0 +1,10 @@
+streamlit
+langchain-chroma
+langchain-community
+langchain-groq
+langchain-core
+fastembed
+pypdf
+flashrank
+rank-bm25
+streamlit-mic-recorder
