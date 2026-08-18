@@ -41,15 +41,24 @@ st.warning(
 # ==========================================
 @st.cache_resource
 def load_rag_pipeline():
+    # Safely load API key from environment variables or Streamlit secrets
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    if not groq_api_key and "GROQ_API_KEY" in st.secrets:
+        groq_api_key = st.secrets["GROQ_API_KEY"]
+
     embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
     vector_store = Chroma(
         persist_directory="./chroma_db_day2",
         embedding_function=embeddings,
         collection_name="medical_rag_day2"
     )
-    llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.0)
+    llm = ChatGroq(
+        model="openai/gpt-oss-120b",
+        temperature=0.0,
+        api_key=groq_api_key
+    )
     
-    # Initialize FlashRank with explicit available model path
+    # Initialize FlashRank with fallback mechanism
     try:
         flashrank_ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2")
     except Exception:
@@ -57,7 +66,7 @@ def load_rag_pipeline():
     
     return vector_store, llm, embeddings, flashrank_ranker
 
-# UNPACK VARIABLES EXPLICITLY AT GLOBAL SCOPE
+# Unpack global components
 vector_store, llm, embeddings, flashrank_ranker = load_rag_pipeline()
 
 # ==========================================
@@ -203,10 +212,10 @@ if user_query:
             "chat_history": st.session_state.chat_history
         }).content
 
-    # Step A: Retrieve
+    # Step A: Dense Vector Retrieval
     retrieved_docs = vector_store.similarity_search(formatted_query, k=top_k)
     
-    # Hybrid BM25 Fusion
+    # Step B: Hybrid BM25 Fusion
     if enable_hybrid and retrieved_docs:
         try:
             bm25_retriever = BM25Retriever.from_documents(retrieved_docs)
@@ -218,7 +227,7 @@ if user_query:
         except Exception:
             pass
 
-    # FlashRank Cross-Encoder Re-ranking
+    # Step C: FlashRank Cross-Encoder Re-ranking
     if enable_rerank and retrieved_docs:
         try:
             passages = [
@@ -238,7 +247,7 @@ if user_query:
         except Exception:
             retrieved_docs = retrieved_docs[:top_k]
 
-    # Context String Formatting
+    # Step D: Context Formatting
     context_str = ""
     sources_info = []
     for idx, doc in enumerate(retrieved_docs):
@@ -256,7 +265,7 @@ if user_query:
             "content": doc.page_content
         })
 
-    # Generate Response
+    # Step E: Answer Generation
     qa_chain = qa_prompt | llm
     response = qa_chain.invoke({
         "input": formatted_query,
@@ -265,7 +274,7 @@ if user_query:
     })
     answer = response.content
 
-    # RAG Evaluator Metric
+    # Step F: RAG Evaluator Metric Calculation
     try:
         eval_chain = eval_prompt | llm
         score_str = eval_chain.invoke({"context": context_str, "answer": answer}).content.strip()
@@ -273,6 +282,7 @@ if user_query:
     except Exception:
         faithfulness_score = 0.98
 
+    # Update State
     st.session_state.messages.append({"role": "user", "content": user_query})
     
     report_text = f"# Clinical Decision Support Report\n\n## Query:\n{user_query}\n\n## Grounded Response:\n{answer}\n"
